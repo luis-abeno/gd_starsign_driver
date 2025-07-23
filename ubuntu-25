@@ -1,0 +1,96 @@
+#!/bin/bash
+
+# Script para instalar o SafeSign Identity Client e suas dependências legadas.
+# Criado em: 2025-07-23
+# Versão: 2.0
+
+# Aborta o script se qualquer comando falhar
+set -e
+
+# --- 1. PREPARAÇÃO DO SISTEMA ---
+echo "INFO: Atualizando lista de pacotes e instalando ferramentas necessárias..."
+sudo apt update
+sudo apt install wget unrar libgdk-pixbuf2.0-0 opensc -y
+
+# Cria um diretório para o download para manter tudo organizado
+INSTALL_DIR=~/Downloads/instalador_safesign
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+echo "INFO: Arquivos serão baixados em: $INSTALL_DIR"
+
+# --- 2. DEFINIÇÃO DE VARIÁVEIS DE PACOTES ---
+# URLs para pacotes de distribuições mais antigas. Podem quebrar no futuro.
+DEBIAN_URL="http://ftp.br.debian.org/debian/pool/main"
+UBUNTU_SEC_URL="http://security.ubuntu.com/ubuntu/pool/main"
+
+# Pacote libssl1.1 do Debian 11 (Bullseye) - mais estável que links antigos do Ubuntu
+LIBSSL_VER="libssl1.1_1.1.1w-0+deb11u1_amd64.deb"
+LIBSSL_URL="$DEBIAN_URL/o/openssl/$LIBSSL_VER"
+
+# Pacotes do Ubuntu 20.04 (Focal Fossa)
+LIBWEBP6_VER="libwebp6_0.6.1-2ubuntu0.20.04.3_amd64.deb"
+LIBWEBP6_URL="$UBUNTU_SEC_URL/libw/libwebp/$LIBWEBP6_VER"
+
+LIBTIFF5_VER="libtiff5_4.1.0+git191117-2ubuntu0.20.04.14_amd64.deb"
+LIBTIFF5_URL="$UBUNTU_SEC_URL/t/tiff/$LIBTIFF5_VER"
+
+LIBWXGTK3_VER="libwxgtk3.0-gtk3-0v5_3.0.5.1+dfsg-4_amd64.deb"
+LIBWXGTK3_URL="http://archive.ubuntu.com/ubuntu/pool/universe/w/wxwidgets3.0/$LIBWXGTK3_VER"
+
+# Pacote principal da GD
+SAFESIGN_RAR="SafeSign_IC_Standard_Linux_3.7.0.0_AET.000_ub2004_x86_64.rar"
+SAFESIGN_URL="https://safesign.gdamericadosul.com.br/content/$SAFESIGN_RAR"
+SAFESIGN_DEB="SafeSign_IC_Standard_Linux_3.7.0.0_AET.000_ub2004_x86_64.deb"
+
+# --- 3. DOWNLOAD DOS ARQUIVOS ---
+echo "INFO: Baixando todos os pacotes necessários..."
+wget -c "$LIBSSL_URL"
+wget -c "$LIBWEBP6_URL"
+wget -c "$LIBTIFF5_URL"
+wget -c "$LIBWXGTK3_URL"
+wget -c "$SAFESIGN_URL"
+
+# --- 4. EXTRAÇÃO DO PACOTE PRINCIPAL ---
+if [ -f "$SAFESIGN_RAR" ]; then
+    echo "INFO: Extraindo o pacote principal do SafeSign..."
+    unrar x -o+ "$SAFESIGN_RAR" # O -o+ sobrescreve arquivos existentes sem perguntar
+else
+    echo "ERRO: Download do arquivo $SAFESIGN_RAR falhou. Abortando."
+    exit 1
+fi
+
+# --- 5. INSTALAÇÃO NA ORDEM CORRETA ---
+echo "INFO: Iniciando a instalação dos pacotes na ordem de dependência."
+
+# Usamos '|| true' para que o script não pare se o pacote já estiver instalado.
+# O 'apt --fix-broken install' cuidará de qualquer problema no final.
+
+sudo dpkg -i "$LIBSSL_VER" || true
+sudo dpkg -i "$LIBWEBP6_VER" || true
+sudo dpkg -i "$LIBTIFF5_VER" || true
+# libwxgtk3.0 precisa que o libgdk-pixbuf2.0-0 (instalado no início) esteja presente
+sudo dpkg -i "$LIBWXGTK3_VER" || true
+
+# Agora instala o pacote principal, que depende dos anteriores
+if [ -f "$SAFESIGN_DEB" ]; then
+    echo "INFO: Instalando o SafeSign..."
+    sudo dpkg -i "$SAFESIGN_DEB" || true
+else
+    echo "ERRO: O arquivo $SAFESIGN_DEB não foi encontrado após a extração. Abortando."
+    exit 1
+fi
+
+# --- 6. FINALIZAÇÃO E VERIFICAÇÃO ---
+echo "INFO: Corrigindo dependências quebradas, caso existam..."
+sudo apt --fix-broken install -y
+
+echo "INFO: Ativando e iniciando o serviço de smartcard (pcscd)..."
+sudo systemctl enable pcscd.socket
+sudo systemctl start pcscd.socket
+
+echo "--------------------------------------------------"
+echo "INFO: Instalação finalizada com sucesso!"
+echo "INFO: Verificando se o token é reconhecido..."
+echo "INFO: Por favor, insira seu token na leitora agora."
+sleep 3
+tokenadmin -l
